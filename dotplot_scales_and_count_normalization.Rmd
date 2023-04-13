@@ -1,0 +1,756 @@
+---
+title: "DotPlot Color Scales and Count Normalization"
+author: "Newton Martin"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = F}
+library(ggbreak)
+library(patchwork)
+# Loading mouse data
+args <- c("grin_only_SDH_DDH_Excit_Inhib", "../Datasets/neurons_and_glia_2022/final_meta_dataset.rds")
+source("../GScpter/Scripts/loadLibraries.R")
+source("../GScpter/Scripts/JSON_Handler.R")
+source("../GScpter/Scripts/Pre_analysis_functions.R")
+source("../GScpter/Scripts/DotPlot.R")
+source("../GScpter/Scripts/PooledDotPlot.R")
+source("../GScpter/Scripts/ClusterPlot.R")
+RDfile <- load_data(args[2])
+assay <- "raw"
+slot <- "data"
+
+extra_pool <- list()
+extra_pool[["top"]] <- list("dataset", "age", "final_cluster_assignment", "run", "nCount_RNA")
+extra_pool[["1"]] <- list("id", "features.label", "subgr")
+extra_pool[["2"]] <- list("id", "features.label")
+extra_pool[["3"]] <- list("features.label")
+extra_pool[["4"]] <- list("features.label", "subgr")
+extra_pool[["5"]] <- list("features.label", "subgr", "age")
+
+user_order <- list()
+user_order[["1"]] <- list("SDH Excitatory", "SDH Inhibitory", "DDH Excitatory", "DDH Inhibitory")
+user_order[["2"]] <- list("SDH", "DDH")
+user_order[["4"]] <- list("Excitatory", "Inhibitory")
+all_cell_roster <- returnAllCellRoster(RDfile)
+```
+
+```{r}
+# Theme for general graphs
+themegsc <- cowplot::theme_cowplot() +
+  theme(
+  text = element_text(family = "sans"),
+  axis.title.x = element_text(face = "bold"),
+  axis.title.y = element_text(face = "bold"),
+  axis.line = element_line(color = "black"),
+  legend.title = element_text(face = "bold"),
+  legend.position = "bottom",
+  strip.background = element_rect(fill = "transparent"),
+  strip.placement = "outside",
+  strip.text = element_text(face = "bold"),
+  panel.background = element_rect(fill = "white"),
+  plot.background = element_rect(fill = "white")
+)
+```
+
+
+## Introduction
+
+This document aims to address the following problems. My masters work involves presenting a lot of dot plots and I also realize that the literature heavily depends on sharing dot plots. Since my thesis is heavily based on them. It would be a good idea for me to consider different ways of representing the same data while also removing any redundancies. [examples of a redundancy]
+
+My current workflow involves:
+- Subsetting the count matrix data from the raw data slot of the Seurat object by clusters of interest (could split this up into multiple steps) (show picture of process or matrix)
+- Taking the value and running a e^x - 1 transformation to undo the `loge(x + 1)` transformation that is used to reduce the range of the values (show github and reference the graph)
+- Average the unloged count values across clusters or groups of cells
+- Place those averages on a z-score
+- Use the z-score as the color scale
+- Of course if a z-score does not work and everything looks (show picture) like there are no differences. Then I use some other scales that I have seen in the literature log cpm, log10, logp1
+
+My workflow yields the exact same values as Seurat (show examples of the numbers). However, since the goal is to generate the dotplot and not the just average expression. There are a number of questions that arise.
+
+- How does log-normalization affect the descriptive statistics of the data (spread, normality, etc.)?
+- Could I calculate the average expression with the log-normalized raw values? If so, would it still need to be transformed again to be put on a color scale?
+- How do using the l-n raw values affect the interpretation of average expression?
+- Do zeros have a stronger or weaker influence on the average?
+- Is median expression of any value?
+- Since each gene is its own assay would it be valuable to have each gene in its own cartesian and on its own color scale?
+
+These questions will be explored 1 by 1 in this document.
+
+## How does log-normalization affect the descriptive statistics of the data (spread, normality, etc.)?
+In the current workflow, I am taking a series of values, unloging them then averaging them. Mathematically, if I were to perform the same log transfomation on arbritray values it would look like this (show the math). The code would look like this. (show the code)
+
+Notice the answer is still 3 + 2 + 5 + 4 = 14. However, adding without unloging the transformation you get a different answer, which is actually equal to the loge(3 * 2 * 5 * 4). It gets further complicated when you use log1p.
+
+log1p(3) + log1p(2) is equivalent to log(4) + log(3) or log((3 + 1) * (2 + 1)). Exponentiating the result then becomes either further tricky because you cannot just run expm1. And when you just exp you wonder how that value got from 5 counts in group A to 12 total loged counts per group. The 12 has less meaning than the 5. Therefore, its better to unlog it.
+
+### How does this affect the averages, their interpretaion and their values? Are the values still in the correct order?
+
+
+
+Does log-normalization make the counts more normally distributed? To test for normality of the logged and unlogged counts plot them on a histogram to see the shape of the distribution and then perform a Kolmogorov-Smirnov test for normality since the sample size in this case is the number of cells. [biological replicates] It would take more work but it would be interesting to see the spread of each gene per sample. Even the non zero values follow a trend of positive skew.
+```{r}
+all_cell_roster %>%
+  ggplot() +
+  geom_density(aes(x = raw_counts),
+                 fill = "red", binwidth = 0.05) +
+  geom_density(aes(x = expm1(raw_counts)),
+                 fill = "blue", alpha = 0.5, binwidth = 0.1) +
+  labs(x = "Logged (red) and Unlogged (blue) raw counts") +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_cartesian(ylim = c(0, 1.5)) +
+  #scale_y_break(c(20000, 74000)) +
+  themegsc
+```
+Figure: Histogram of the raw counts for all 7 GRIN genes. In red there are the log(x + 1) raw counts as they are normally in Seurat object. In the blue are the raw counts without the log transformation.
+
+
+
+The test statistic for the log-normalized counts indicates... []
+```{r}
+ks.test(all_cell_roster$raw_counts, "pnorm")
+```
+The test statistic for the unlogged counts indicates... []
+```{r}
+ks.test(expm1(all_cell_roster$raw_counts), "pnorm")
+```
+[What does this mean?] The log normalization just restricts the range. It does not make the data more normal in this case.
+
+Plotting the distribution of counts for each gene with a vertical representaion of the mean.
+```{r}
+all_cell_roster %>%
+  #filter(cluster == "Inhib-9") %>%
+  ggplot() +
+  geom_histogram(aes(x = raw_counts), color = "black",
+                 fill = "red", binwidth = 0.5) +
+  geom_histogram(aes(x = expm1(raw_counts)), color = "black",
+                 fill = "blue", alpha = 0.5, binwidth = 0.5) +
+  stat_summary(aes(x = 0.1, y = expm1(raw_counts), xintercept = stat(y), group = features.label),
+               fun = mean, geom = "vline", color = "orange") +
+  stat_summary(aes(x = 0.1, y = expm1(raw_counts), label = stat(y), group = features.label),
+               fun = mean, geom = "label", vjust = -2, hjust = -0.25) +
+  labs(x = "Logged (red) and Unlogged (blue) raw counts, mean of unlogged",
+       y = "Frequency") +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_cartesian(ylim = c(0, 5000)) +
+  facet_wrap(~features.label) +
+  themegsc
+```
+Figure: Histogram of the raw counts for each GRIN gene separately. In red there are the log(x + 1) raw counts as they are normally in Seurat object. In the blue are the raw counts without the log transformation. The orange line is the average expression of each gene across all of the cells.
+
+
+However if the data is not normal should we be using the average to represent it or is there more information to be gained from the spread of the data.
+
+What does the CPM or CPT scale do to the data. Here we calculate counts per million and counts per total. Counts per total was a mistaken calculation that ended up showing the same patterns on the dotplot. Counts per total values are so small that we cannot put them and CPM values on the same graph.
+```{r}
+all_cell_roster$CPM <- run_CPM(all_cell_roster, "CPM")$raw_counts
+all_cell_roster$CPT <- run_CPM(all_cell_roster, "countspertotal")$raw_counts
+ks.test(all_cell_roster$CPM, "pnorm")
+ks.test(all_cell_roster$CPT, "pnorm")
+# CPM
+all_cell_roster %>%
+  ggplot() +
+  geom_histogram(aes(x = CPM), fill = "red", binwidth = 300, color = "black") +
+  stat_summary(aes(x = 0.1, y = CPM, xintercept = stat(y), group = features.label),
+               fun = mean, geom = "vline") +
+  labs(x = "CPM (red) and CPT (blue) raw counts") +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_cartesian(ylim = c(0, 4000)) +
+  facet_wrap(~features.label) +
+  themegsc
+#CPT
+all_cell_roster %>%
+  ggplot() +
+  geom_histogram(aes(x = CPT), fill = "lightblue", binwidth = 0.01, color = "black") +
+  stat_summary(aes(x = 0.1, y = CPT, xintercept = stat(y), group = features.label),
+               fun = mean, geom = "vline", color = "pink") +
+  labs(x = "CPM (red) and CPT (blue) raw counts") +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_cartesian(ylim = c(0, 1400)) +
+  facet_wrap(~features.label, scales = "free_x") +
+  themegsc
+```
+Figure: Histogram of the counts per million for each GRIN gene separately. In red there are the log(x + 1) raw counts as they are normally in Seurat object. In the blue are the raw counts without the log transformation. The orange line is the average expression of each gene across all of the cells.
+
+### Alternatives to the dot plot
+#### The boxplot with color for pct express
+This one will not have average expression but will instead have the median and interquartile range of each group. The x axis will have
+Because I am making a box plot and I do not need to calculate average expression I will just plot the raw counts on the x axis.
+
+```{r}
+ung_acr <- group_expand(all_cell_roster, overgrouped = "id")
+
+# Get the points that are outliers above 90 or below 10% quartile.
+bp_points <- function(x) {
+  subset(x, x < quantile(x, probs = 0.1) | quantile(x, probs = 0.9) < x)
+}
+
+ung_acr %>%
+  ggplot(aes(id, raw_counts)) +
+  stat_summary(
+    aes(
+      fill = after_stat(pct.exp)
+    ),
+    geom="boxplot",
+    fun.data = ~ data.frame(ymin = quantile(.x, 0.10),
+                            lower = quantile(.x, 0.25),
+                            middle = quantile(.x, 0.5),
+                            upper = quantile(.x, 0.75),
+                            ymax = quantile(.x, 0.90),
+                            pct.exp = pct_calc(.x))) +
+  stat_summary(fun.y = bp_points, geom="point") +
+  labs(x = "Region", y = "Raw logged counts", fill = "Percent Expressed") +
+  facet_grid(~features.label) +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_cartesian(ylim = c(0, p5max(all_cell_roster$raw_counts))) +
+  scale_fill_viridis_c(option = "plasma") +
+  themegsc
+```
+We are unable to see the percent expressed of the groups with a lot of zeroes. The percent expressed gives information on whether or not we can accept the value or not [change wording here]. We can add the color scale perhaps in another way with a line at the top.
+
+```{r}
+# Function for plotting the pct.exp a bars on the top.
+index <- 1
+pct_rect <- function (x, width, height, location) {
+  # This for the grid faceting
+  if (index == 2) {
+    index <<- 1
+  } else if (index == 1) {
+    index <<- 2
+  }
+  dims <- data.frame(pct.exp = pct_calc(x),
+                     ymin = location - (height / 2),
+                     ymax = location + (height / 2)) %>% 
+    mutate(seqnum = index,
+           xmin = seqnum - (width / 2),
+           xmax = seqnum + (width / 2))
+  dims
+}
+
+loc <- p5max(all_cell_roster$raw_counts)
+
+# Draw the plot
+ung_acr %>%
+  ggplot(aes(id, raw_counts)) +
+  geom_boxplot(aes(y = raw_counts, x  = id), fill = "lightblue") +
+  stat_summary(
+    aes(fill = after_stat(pct.exp)),
+    geom="rect",
+    fun.data = ~ pct_rect(.x,
+                          width = 0.9,
+                          height = 0.1,
+                          location = loc)) +
+  stat_summary(fun.y = bp_points, geom="point") +
+  labs(x = "Region", y = "Raw logged counts", fill = "Percent Expressed") +
+  facet_grid(~features.label) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_viridis_c(option = "plasma") +
+  scale_fill_gradientn(limits = c(0, 100)) +
+  themegsc
+```
+We can also try it with violin plots.
+```{r}
+
+```
+
+
+We can compare the values from the dotplot generated by seurat. Based on this analysis and a github issue I submitted, Seurat calculates average expression by first unlogging the count values then averaging them.
+```{r}
+# Comparing average expression values
+# This portion relies on having RDfile and all_cell_roster
+global_size <- 36
+seurat_dp <- DotPlot(RDfile, features = c("Grin1", "Grin2a", "Grin2b", "Grin2c",
+                                          "Grin2d", "Grin3a", "Grin3b")) +
+  coord_flip() +
+  geom_label(aes(label = signif(avg.exp, digits = 2))) +
+  labs(y = "Cluster", x = "Gene",
+       color = "Avg exp scaled", size = "% Expressing") +
+  scale_size(range = c(0, 20)) +
+  scale_color_viridis_c(option = "plasma") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,
+                                   hjust = 1, size = global_size,
+                                   color = "black"),
+        axis.text.y = element_text(angle = 0, vjust = 0.5,
+                                   hjust = 1, size = global_size,
+                                   color = "black"),
+        axis.title = element_text(size = global_size, face = "bold"),
+        legend.key.size = unit(1.5, "line"),
+        legend.text = element_text(size = global_size/1.75),
+        legend.title = element_text(size = global_size),
+        legend.position = "bottom",
+        legend.box = "horizontal",
+        legend.spacing.x = unit(1.5, "line"),
+        plot.background = element_rect(fill = "white"))
+```
+Here is a seurat derived plot with the color scale developed from a z-score. The labels are the unscaled average expression values for easy comparison with the GScpter derived DotPlots.
+```{r}
+#z-score
+subdp <- seurat_dp
+subdp$data <- subdp$data %>% filter(id %in% unique(all_cell_roster$cluster)) %>%
+  mutate(avg.exp.scaled.old = avg.exp.scaled, avg.exp.scaled = zs_calc(avg.exp))
+subdp
+save_image("SeuDP_GScform_zs", subdp, height = 2600, width = 7600)
+```
+Here is the Seurat derived plot with the color scale made with a log10 score. The labels are the unscaled average expression values for easy comparison with the GScpter derived DotPlots.
+```{r}
+#log10
+subdp <- seurat_dp
+subdp$data <- subdp$data %>% filter(id %in% unique(all_cell_roster$cluster)) %>%
+  mutate(avg.exp.scaled.old = avg.exp.scaled, avg.exp.scaled = log10(avg.exp))
+subdp
+save_image("SeuDP_GScform_log10", subdp, height = 2600, width = 7600)
+```
+Here is the Seurat derived plot with the color scale made with a log1p score. The labels are the unscaled average expression values for easy comparison with the GScpter derived DotPlots.
+```{r}
+#log1p
+subdp <- seurat_dp
+subdp$data <- subdp$data %>% filter(id %in% unique(all_cell_roster$cluster)) %>%
+  mutate(avg.exp.scaled.old = avg.exp.scaled, avg.exp.scaled = log1p(avg.exp))
+subdp
+save_image("SeuDP_GScform_log1p", subdp, height = 2600, width = 7600)
+```
+
+Experimenting with the counts per million scale
+```{r}
+lbc <- createListbyCluster(scale.method = "log1p")
+# What is equivalent to seurat?
+seu_gcp <- lbc %>%
+  left_join(b$data %>% mutate(cluster = id, features.label = features.plot),
+            by = c("cluster", "features.label"))
+
+all(seu_gcp$avg.exp.x == seu_gcp$avg.exp.y)
+all(seu_gcp$pct.exp.x == seu_gcp$pct.exp.y)
+# It is really different taking from RNA vs taking from raw
+# I might be in some cases understating or overstating the results from my
+# visualizations.
+
+
+# Using the counts per million scale
+all_cell_roster$CPM <- run_CPM(all_cell_roster, "CPM")$raw_counts
+all_cell_roster$CPT <- run_CPM(all_cell_roster, "countspertotal")$raw_counts
+ung_acr <- group_expand(all_cell_roster, overgrouped = "id")
+# I had the count * nCount_RNA / 10^6 before
+# If I look at the mouse data hardly anything is in the million range
+# Why not do counts per thousand?
+# It will look the exact same way.
+ung_acr %>%
+  group_by(id, features.label) %>%
+  summarise(pct.exp = pct_calc(raw_counts), avg.exp = mean(CPM)) %>%
+  mutate(scale = zs_calc(avg.exp)) %>%
+  ungroup(everything()) %>%
+  ggplot() +
+  geom_point(aes(id, features.label, color = scale, size = pct.exp)) +
+  geom_label(aes(id, features.label, label = signif(avg.exp, digits = 2),
+                 hjust = 0.5, vjust = -0.5)) +
+  scale_color_viridis_c(option = "plasma")
+# Can I set a counts per million cutoff for anything too small
+# and basically say that it was just undetectable with the selcted assay or 
+# conditions.
+# Plot it a different way that shows you every once of information
+ung_acr %>%
+  ggplot() +
+  geom_histogram(aes(CPM, fill = id), binwidth = 25) +
+  scale_y_continuous(limits = c(0, 10000)) +
+  scale_fill_viridis_d() +
+  ung_acr %>%
+  ggplot() +
+  geom_histogram(aes(raw_counts, fill = id), binwidth = 0.1) +
+  scale_fill_viridis_d() +
+  ung_acr %>%
+  ggplot() +
+  geom_histogram(aes(nCount_RNA, fill = id), binwidth = 10^4) +
+  scale_y_continuous(limits = c(0, 10000)) +
+  scale_fill_viridis_d()
+# I would love to figure out what that blip is
+
+# Plot how the CPT or CPM changes across 
+ung_acr %>%
+  ggplot() +
+  geom_point(aes(raw_counts, nCount_RNA, size = zs_calc(CPM)),
+             color = "grey", alpha = 0.5,
+             position = position_jitter(width = 0.15)) +
+  ung_acr %>%
+  ggplot() +
+  geom_point(aes(raw_counts, nCount_RNA, size = zs_calc(CPT)),
+             color = "wheat", alpha = 0.5,
+             position = position_jitter(width = 0.15))
+# Should I unlog the raw counts before calcualting CPM
+# CPM is relatively stable
+# I wonder what it does to averages
+# 
+```
+
+Modify the dotplot to show the median count rather than the average.
+```{r}
+lbc <- createListbyCluster(scale.method = "noscale")
+global_size <- 20
+lbc %>%
+    ggplot() +
+    geom_point(aes(y = features.label, x = cluster, color = med.exp, size = pct.exp)) +
+    geom_label(aes(y = features.label, x = cluster, label = signif(med.exp, digits = 2))) +
+    geom_label(aes(y = features.label, x = cluster, label = signif(avg.exp, digits = 2)),
+               vjust = 2, fill = "lightblue") +
+    labs(x = "Cluster", y = "Gene", color = "Med exp", size = "% Expressing") +
+    scale_size(range = c(0, 20)) +
+    scale_color_viridis_c(option = "plasma") +
+    cowplot::theme_cowplot() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5,# 90 0.5
+                                     hjust = 1, size = global_size,
+                                     color = "black"),
+          axis.text.y = element_text(angle = 0, vjust = 0.5,
+                                     hjust = 1, size = global_size,
+                                     color = "black"),
+          axis.title = element_text(size = global_size, face = "bold"),
+          legend.key.size = unit(1.5, "line"),
+          legend.text = element_text(size = global_size/1.75),
+          legend.title = element_text(size = global_size, angle = 90),
+          legend.spacing.x = unit(1.5, "line"),
+          plot.background = element_rect(fill = "white"))
+```
+It shows the maximum counts for a gene expressed in the lowest 50 of cells of a group. [Needs obvious re-wording]. Interesting how 0, 0.69 and 1.1 are very common is that relevant.
+```{r}
+lbc %>%
+  filter(pct.exp >= 50) %>%
+  arrange(pct.exp)
+```
+
+Seeing the same number pop up so many times cannot be coincidence. Lets plot the data as a box plot to find out more.
+```{r}
+all_cell_roster %>%
+  ggplot(aes(cluster, raw_counts)) +
+  geom_boxplot(aes(fill = features.label)) +
+  stat_summary(aes(x = cluster, y = stage(raw_counts, after_stat = 3),
+                   label = after_stat(signif(middle, 2))),
+               vjust = 2, fun.data = ~ data.frame(middle = quantile(.x, 0.5)), geom = "label") +
+  facet_grid(rows = vars(features.label)) +
+  labs(x = "Cluster", y = "Counts") +
+  scale_y_continuous(expand = c(0, 0)) +
+  themegsc
+```
+It does not tell us much because some of them have different spred but the same median. Still others have similar spread and wildly different medians. Perhsaps looking at the distribution would be more helpful with the use of violin plots.
+
+```{r}
+all_cell_roster %>%
+  ggplot(aes(cluster, raw_counts)) +
+  geom_violin(aes(fill = features.label)) +
+  stat_summary(fun = median, geom = "crossbar", position = position_dodge(width = 0.8)) +
+  stat_summary(aes(x = cluster, y = stage(raw_counts, after_stat = 3),
+                   label = after_stat(signif(middle, 2))),
+               vjust = 2, fun.data = ~ data.frame(middle = quantile(.x, 0.5)), geom = "label") +
+  facet_grid(rows = vars(features.label)) +
+  labs(x = "Cluster", y = "Counts") +
+  scale_y_continuous(expand = c(0, 0)) +
+  themegsc
+```
+
+We could also see if the median changes when we use the CPM scale.
+```{r}
+all_cell_roster %>%
+  group_by(features.label, cluster) %>%
+  run_CPM("CPM") %>%
+  summarise(med.exp = median(raw_counts),
+            pct.exp = pct_calc(raw_counts),
+            avg.exp = mean(raw_counts)) %>%
+  ungroup(features.label, cluster) %>%
+  ggplot() +
+    geom_point(aes(y = features.label, x = cluster, color = med.exp, size = pct.exp)) +
+    geom_label(aes(y = features.label, x = cluster, label = signif(med.exp, digits = 2))) +
+    geom_label(aes(y = features.label, x = cluster, label = signif(avg.exp, digits = 2)),
+               vjust = 2, fill = "lightblue") +
+    labs(x = "Cluster", y = "Gene", color = "Med exp", size = "% Expressing") +
+    scale_size(range = c(0, 20)) +
+    scale_color_viridis_c(option = "plasma") +
+    cowplot::theme_cowplot() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5,# 90 0.5
+                                     hjust = 1, size = global_size,
+                                     color = "black"),
+          axis.text.y = element_text(angle = 0, vjust = 0.5,
+                                     hjust = 1, size = global_size,
+                                     color = "black"),
+          axis.title = element_text(size = global_size, face = "bold"),
+          legend.key.size = unit(1.5, "line"),
+          legend.text = element_text(size = global_size/1.75),
+          legend.title = element_text(size = global_size, angle = 90),
+          legend.spacing.x = unit(1.5, "line"),
+          plot.background = element_rect(fill = "white"))
+```
+```{r}
+all_cell_roster %>%
+  run_CPM("CPM") %>%
+  ggplot(aes(cluster, raw_counts)) +
+  geom_boxplot(aes(fill = features.label)) +
+  stat_summary(aes(x = cluster, y = stage(raw_counts, after_stat = 3500),
+                   label = after_stat(signif(middle, 2)), fill = features.label),
+               fun.data = ~ data.frame(middle = quantile(.x, 0.5)), geom = "label") +
+  facet_grid(rows = vars(features.label)) +
+  labs(x = "Cluster", y = "Counts") +
+  scale_y_continuous(expand = c(0, 0)) +
+  themegsc
+```
+```{r}
+all_cell_roster %>%
+  run_CPM("CPM") %>%
+  ggplot(aes(cluster, raw_counts)) +
+  geom_violin(aes(fill = features.label)) +
+  stat_summary(fun = median, geom = "crossbar", position = position_dodge(width = 0.8)) +
+  stat_summary(aes(x = cluster, y = stage(raw_counts, after_stat = 3500),
+                   label = after_stat(signif(middle, 2)), fill = features.label),
+               fun.data = ~ data.frame(middle = quantile(.x, 0.5)), geom = "label") +
+  facet_grid(rows = vars(features.label)) +
+  labs(x = "Cluster", y = "Counts") +
+  scale_y_continuous(expand = c(0, 0)) +
+  themegsc
+```
+
+
+It is pointless to look for one metric that represents all of the data. Average does not seem like it would work here but niether does median. Each of them is equally hard to conceptualize as to the biological relevance. Although some patterns do jump out. For instance, the groups with similar medians tend to have similar shapes but that rule is not always true. At least with the average each group has a different value depending on all the data points not just the lower 50%.
+
+What we can try doing is putting each gene on its own scale using average expression. First without CPM.
+```{r}
+all_cell_roster %>%
+  #run_CPM("CPM") %>%
+  group_by(features.label, cluster) %>%
+  summarise(avg.exp = mean(raw_counts),
+            pct.exp = pct_calc(raw_counts)) %>%
+  ungroup(cluster) %>%
+  mutate(avg.exp.scaled = zs_calc(avg.exp)) %>%
+  ungroup(features.label) %>%
+  ggplot() +
+  geom_point(aes(y = 2, x = cluster, color = avg.exp.scaled, size = pct.exp)) +
+  labs(x = "Cluster", y = "Gene", color = "Avg exp z scaled per gene", size = "% Expressing") +
+  scale_size(range = c(0, 20)) +
+  scale_color_viridis_c(option = "plasma") +
+  facet_grid(rows = vars(features.label), scales = "free") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,# 90 0.5
+                                    hjust = 1, size = global_size,
+                                    color = "black"),
+        axis.text.y = element_text(angle = 0, vjust = 0.5,
+                                    hjust = 1, size = global_size,
+                                    color = "black"),
+        axis.title = element_text(size = global_size, face = "bold"),
+        legend.key.size = unit(1.5, "line"),
+        legend.text = element_text(size = global_size/1.75),
+        legend.title = element_text(size = global_size, angle = 90),
+        legend.spacing.x = unit(1.5, "line"),
+        plot.background = element_rect(fill = "white"))
+```
+With CPM
+```{r}
+all_cell_roster %>%
+  run_CPM("CPM") %>%
+  group_by(features.label, cluster) %>%
+  summarise(avg.exp = mean(raw_counts),
+            pct.exp = pct_calc(raw_counts)) %>%
+  ungroup(cluster) %>%
+  mutate(avg.exp.scaled = zs_calc(avg.exp)) %>%
+  ungroup(features.label) %>%
+  ggplot() +
+  geom_point(aes(y = 2, x = cluster, color = avg.exp.scaled, size = pct.exp)) +
+  labs(x = "Cluster", y = "Gene", color = "Avg exp z scaled per gene", size = "% Expressing") +
+  scale_size(range = c(0, 20)) +
+  scale_color_viridis_c(option = "plasma") +
+  facet_grid(rows = vars(features.label), scales = "free") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,# 90 0.5
+                                    hjust = 1, size = global_size,
+                                    color = "black"),
+        axis.text.y = element_text(angle = 0, vjust = 0.5,
+                                    hjust = 1, size = global_size,
+                                    color = "black"),
+        axis.title = element_text(size = global_size, face = "bold"),
+        legend.key.size = unit(1.5, "line"),
+        legend.text = element_text(size = global_size/1.75),
+        legend.title = element_text(size = global_size, angle = 90),
+        legend.spacing.x = unit(1.5, "line"),
+        plot.background = element_rect(fill = "white"))
+```
+What do I learn from this
+
+
+There is the issue that if readers are use to seeing average expression on the color scale, then they will be intuitively look at the color scale and think that it refers to average expression, unless it was outwardly obvious. Therefore, if I were to do a DotPlot I would use average expression out of convention and to capture the shape / spread but other graphs can show so much more information and help us understand the single cell data a lot more. 
+The next thing to consider is the biological relevance of the CPM scale, the CPT scale or average expression. Counts represent the number of detected cDNA fragments that align to a particular mRNA (based on a library). It is then normalized using TPM or other things. Then the average expression refers to the average normalized number of fragments that align to a particular gene. Counts per million is the ratio of the counts for one gene and cell to the total amount of counts for the entire cell then multiplied by 1 million. While multiplying by 1,000 or 100 would essentially yield the same ratios and therfore the same distances across assays, using 1 million is a convention that was carried over from bulk RNA seq and I find that using smaller 10s would resut in very small numbers. Counts per total is the product of the count for a particular gene and cell by the total counts of all genes in a given cell and then divided by 1 million. The resulting values are much smaller than CPM. Let us now investigate which scale is adequate for this application. Is the CPM transformation really better than just using the raw counts?
+
+```{r}
+
+```
+
+
+
+
+
+
+
+# The human data
+
+
+```{r, include = F}
+library(here)
+# Loading mouse data
+args <- c("grin_only_human_DH_Excit_Inhib", "../../Datasets/human_spinalcord_2022/top_level_new_annotation.rda")
+#setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+here("../GScpter/Scripts/")
+source("loadLibraries.R")
+source("JSON_Handler.R")
+source("Pre_analysis_functions.R")
+source("DotPlot.R")
+source("PooledDotPlot.R")
+source("ClusterPlot.R")
+RDfile <- load_data(args[2])
+assay <- "raw"
+slot <- "data"
+
+extra_pool <- list()
+extra_pool[["top"]] <- list("nCount_RNA", "nCount_SCT", "batches_combined",
+                            "HSC_Subcluster_Annotation", "new_annotation",
+                            "top_level_annotation")
+extra_pool[["1"]] <- list("id", "features.label")
+extra_pool[["2"]] <- list("features.label")
+extra_pool[["3"]] <- list("features.label", "subgr")
+extra_pool[["4"]] <- list("features.label", "batches_combined")
+
+user_order <- list()
+user_order[["1"]] <- list("SDH Excitatory", "SDH Inhibitory", "DDH Excitatory", "DDH Inhibitory")
+user_order[["2"]] <- list("SDH", "DDH")
+user_order[["4"]] <- list("Excitatory", "Inhibitory")
+all_cell_roster <- returnAllCellRoster(RDfile)
+```
+
+```{r}
+# Human
+# This portion relies on having RDfile and all_cell_roster
+global_size <- 36
+seurat_dp <- DotPlot(RDfile, features = c("rna_GRIN1", "rna_GRIN2A", "rna_GRIN2B", "rna_GRIN2C",
+                                          "rna_GRIN2D", "rna_GRIN3A", "rna_GRIN3B"),
+                     assay = "integrated") +
+  coord_flip() +
+  geom_label(aes(label = signif(avg.exp, digits = 2))) +
+  labs(y = "Cluster", x = "Gene",
+       color = "Avg exp scaled", size = "% Expressing") +
+  scale_size(range = c(0, 20)) +
+  scale_color_viridis_c(option = "plasma") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,
+                                   hjust = 1, size = global_size,
+                                   color = "black"),
+        axis.text.y = element_text(angle = 0, vjust = 0.5,
+                                   hjust = 1, size = global_size,
+                                   color = "black"),
+        axis.title = element_text(size = global_size, face = "bold"),
+        legend.key.size = unit(1.5, "line"),
+        legend.text = element_text(size = global_size/1.75),
+        legend.title = element_text(size = global_size),
+        legend.position = "bottom",
+        legend.box = "horizontal",
+        legend.spacing.x = unit(1.5, "line"),
+        plot.background = element_rect(fill = "white"))
+
+#z-score
+seurat_dp
+View(seurat_dp$data %>%
+  mutate(avg.exp.rescaled = zs_calc(avg.exp)))
+save_image("SeuDP_GScform_zs_nokey", seurat_dp, height = 2600, width = 2600)
+save_image("SeuDP_GScform_zs", seurat_dp, height = 2600, width = 2600)
+save_image("SeuDP_GScform_lab", seurat_dp, height = 2600, width = 2600)
+
+#log10
+subdp <- seurat_dp
+subdp$data <- subdp$data %>% filter(id %in% unique(all_cell_roster$cluster)) %>%
+  mutate(avg.exp.scaled.old = avg.exp.scaled, avg.exp.scaled = log10(avg.exp))
+subdp
+save_image("SeuDP_GScform_log10", subdp, height = 2600, width = 7600)
+
+#log1p
+subdp <- seurat_dp
+subdp$data <- subdp$data %>% filter(id %in% unique(all_cell_roster$cluster)) %>%
+  mutate(avg.exp.scaled.old = avg.exp.scaled, avg.exp.scaled = log1p(avg.exp))
+subdp
+save_image("SeuDP_GScform_log1p", subdp, height = 2600, width = 7600)
+
+# labels
+subdp <- seurat_dp
+subdp$data <- subdp$data %>% filter(id %in% unique(all_cell_roster$cluster)) %>%
+  mutate(avg.exp.scaled.old = avg.exp.scaled, avg.exp.scaled = log1p(avg.exp))
+subdp
+save_image("SeuDP_GScform_log1p_lab", subdp, height = 2600, width = 7600)
+```
+
+
+
+
+```{r}
+# What is equivalent to seurat?
+seu_gcp <- lbc %>%
+  left_join(b$data %>% mutate(cluster = id, features.label = features.plot),
+            by = c("cluster", "features.label"))
+
+all(seu_gcp$avg.exp.x == seu_gcp$avg.exp.y)
+all(seu_gcp$pct.exp.x == seu_gcp$pct.exp.y)
+# It is really different taking from RNA vs taking from raw
+# I might be in some cases understating or overstating the results from my
+# visualizations.
+
+
+# Using the counts per million scale
+all_cell_roster$CPM <- run_CPM(all_cell_roster, "CPM")$raw_counts
+all_cell_roster$CPT <- run_CPM(all_cell_roster, "countspertotal")$raw_counts
+ung_acr <- group_expand(all_cell_roster, overgrouped = "id")
+# I had the count * nCount_RNA / 10^6 before
+# If I look at the mouse data hardly anything is in the million range
+# Why not do counts per thousand?
+# It will look the exact same way.
+ung_acr %>%
+  group_by(id, features.label) %>%
+  summarise(pct.exp = pct_calc(raw_counts), avg.exp = mean(CPM)) %>%
+  mutate(scale = zs_calc(avg.exp)) %>%
+  ungroup(everything()) %>%
+  ggplot() +
+  geom_point(aes(id, features.label, color = scale, size = pct.exp)) +
+  geom_label(aes(id, features.label, label = signif(avg.exp, digits = 2),
+                 hjust = 0.5, vjust = -0.5)) +
+  scale_color_viridis_c(option = "plasma")
+# Can I set a counts per million cutoff for anything too small
+# and basically say that it was just undetectable with the selcted assay or 
+# conditions.
+# Plot it a different way that shows you every once of information
+ung_acr %>%
+  ggplot() +
+  geom_histogram(aes(CPM, fill = id), binwidth = 25) +
+  scale_y_continuous(limits = c(0, 10000)) +
+  scale_fill_viridis_d() +
+  ung_acr %>%
+  ggplot() +
+  geom_histogram(aes(raw_counts, fill = id), binwidth = 0.1) +
+  scale_fill_viridis_d() +
+  ung_acr %>%
+  ggplot() +
+  geom_histogram(aes(nCount_RNA, fill = id), binwidth = 10^4) +
+  scale_y_continuous(limits = c(0, 10000)) +
+  scale_fill_viridis_d()
+# I would love to figure out what that blip is
+
+# Plot how the CPT or CPM changes across 
+ung_acr %>%
+  ggplot() +
+  geom_point(aes(raw_counts, nCount_RNA, size = zs_calc(CPM)),
+             color = "grey", alpha = 0.5,
+             position = position_jitter(width = 0.15)) +
+  ung_acr %>%
+  ggplot() +
+  geom_point(aes(raw_counts, nCount_RNA, size = zs_calc(CPT)),
+             color = "wheat", alpha = 0.5,
+             position = position_jitter(width = 0.15))
+# Should I unlog the raw counts before calcualting CPM
+# CPM is relatively stable
+# I wonder what it does to averages
+# 
+```
+
+
+
+
