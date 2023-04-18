@@ -7,19 +7,19 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = dirname(rstudioapi::getActiveDocumentContext()$path))
+knitr::opts_knit$set(root.dir = "../GScpter/Scripts")
 ```
 
 ```{r, include = F}
-library(ggbreak)
-library(patchwork)
 # Loading mouse data
-args <- c("grin_only_SDH_DDH_Excit_Inhib", "../Datasets/neurons_and_glia_2022/final_meta_dataset.rds")
-source("../GScpter/Scripts/loadLibraries.R")
-source("../GScpter/Scripts/JSON_Handler.R")
-source("../GScpter/Scripts/Pre_analysis_functions.R")
-source("../GScpter/Scripts/DotPlot.R")
-source("../GScpter/Scripts/PooledDotPlot.R")
-source("../GScpter/Scripts/ClusterPlot.R")
+args <- c("grin_only_SDH_DDH_Excit_Inhib", "../../Datasets/neurons_and_glia_2022/final_meta_dataset.rds")
+source("loadLibraries.R")
+source("JSON_Handler.R")
+source("Pre_analysis_functions.R")
+source("DotPlot.R")
+source("PooledDotPlot.R")
+source("ClusterPlot.R")
 RDfile <- load_data(args[2])
 assay <- "raw"
 slot <- "data"
@@ -39,8 +39,9 @@ user_order[["4"]] <- list("Excitatory", "Inhibitory")
 all_cell_roster <- returnAllCellRoster(RDfile)
 ```
 
-```{r}
+```{r, include = F}
 # Theme for general graphs
+global_size <- 16
 themegsc <- cowplot::theme_cowplot() +
   theme(
   text = element_text(family = "sans"),
@@ -96,9 +97,9 @@ Does log-normalization make the counts more normally distributed? To test for no
 ```{r}
 all_cell_roster %>%
   ggplot() +
-  geom_density(aes(x = raw_counts),
+  geom_histogram(aes(x = raw_counts),
                  fill = "red", binwidth = 0.05) +
-  geom_density(aes(x = expm1(raw_counts)),
+  geom_histogram(aes(x = expm1(raw_counts)),
                  fill = "blue", alpha = 0.5, binwidth = 0.1) +
   labs(x = "Logged (red) and Unlogged (blue) raw counts") +
   scale_y_continuous(expand = c(0, 0)) +
@@ -245,8 +246,7 @@ ung_acr %>%
   labs(x = "Region", y = "Raw logged counts", fill = "Percent Expressed") +
   facet_grid(~features.label) +
   scale_y_continuous(expand = c(0, 0)) +
-  scale_fill_viridis_c(option = "plasma") +
-  scale_fill_gradientn(limits = c(0, 100)) +
+  scale_fill_viridis_c(option = "plasma", limits = c(0, 100)) +
   themegsc
 ```
 Figure: Box plot showing the median and interquartile range (IQR) of raw log(x + 1) counts. The IQR contains those higher than 25% but lower than 75%. The color block above each box plot is for the percent expressed on a color scale.
@@ -260,7 +260,6 @@ Figure: Violin plots showing the distribution of raw log(x + 1) counts. The colo
 Modify the dotplot to show the median count rather than the average.
 ```{r}
 lbc <- createListbyCluster(scale.method = "noscale")
-global_size <- 20
 lbc %>%
     ggplot() +
     geom_point(aes(y = features.label, x = cluster, color = med.exp, size = pct.exp)) +
@@ -466,12 +465,40 @@ What do I learn from this
 One benefit is that a cluster with enormously large average expression in one gene does not result in a color scale where all of the other differences across clusters and genes is hard to see.
 
 
-There is the issue that if readers are use to seeing average expression on the color scale, then they will be intuitively look at the color scale and think that it refers to average expression, unless it was outwardly obvious. Therefore, if I were to do a DotPlot I would use average expression out of convention and to capture the shape / spread but other graphs can show so much more information and help us understand the single cell data a lot more. 
-The next thing to consider is the biological relevance of the CPM scale, the CPT scale or average expression. Counts represent the number of detected cDNA fragments that align to a particular mRNA (based on a library). It is then normalized using TPM or other things. Then the average expression refers to the average normalized number of fragments that align to a particular gene. Counts per million is the ratio of the counts for one gene and cell to the total amount of counts for the entire cell then multiplied by 1 million. While multiplying by 1,000 or 100 would essentially yield the same ratios and therfore the same distances across assays, using 1 million is a convention that was carried over from bulk RNA seq and I find that using smaller 10s would resut in very small numbers. Counts per total is the product of the count for a particular gene and cell by the total counts of all genes in a given cell and then divided by 1 million. The resulting values are much smaller than CPM. Let us now investigate which scale is adequate for this application. Is the CPM transformation really better than just using the raw counts?
-
 I have seen Dr. Levine and team use a z-score on log(CPM + 1) transformed counts.
 ```{r}
-
+lbc <- createListbyCluster(scale.method = "zsoflog1pCPM", pre.expm1 = T)
 ```
+```{r}
+lbc <- createListbyCluster(scale.method = "zsoflog1pCPM", pre.expm1 = F)
+```
+```{r}
+lbc %>%
+    ggplot() +
+    geom_point(aes(y = features.label, x = cluster, color = avg.exp.scaled, size = pct.exp)) +
+    labs(x = "Cluster", y = "Gene",
+         color = wrapper("Z score on log10(CPM + 1)", width = 8),
+         size = "% Expressing") +
+    scale_size(range = c(0, 20)) +
+    scale_color_viridis_c(option = "plasma") +
+    cowplot::theme_cowplot() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5,# 90 0.5
+                                     hjust = 1, size = global_size,
+                                     color = "black"),
+          axis.text.y = element_text(angle = 0, vjust = 0.5,
+                                     hjust = 1, size = global_size,
+                                     color = "black"),
+          axis.title = element_text(size = global_size, face = "bold"),
+          legend.key.size = unit(1.5, "line"),
+          legend.text = element_text(size = global_size/1.75),
+          legend.title = element_text(size = global_size, angle = 90),
+          legend.spacing.x = unit(1.5, "line"),
+          plot.background = element_rect(fill = "white"))
+```
+Average expression and percent expressed of GRIN gene in spinal cord dorsal horn neuronal subpoplations clusters from the Russ et al. (2021) mouse data. The average expression is represented as the color of the dot and is a z-score scale of log10(CPM + 1) counts. The percent expressed is represented by the size of each dot.
+
+
+There is the issue that if readers are use to seeing average expression on the color scale, then they will be intuitively look at the color scale and think that it refers to average expression, unless it was outwardly obvious. Therefore, if I were to do a DotPlot I would use average expression out of convention and to capture the shape / spread but other graphs can show so much more information and help us understand the single cell data a lot more. 
+The next thing to consider is the biological relevance of the CPM scale, the CPT scale or average expression. Counts represent the number of detected cDNA fragments that align to a particular mRNA (based on a library). It is then normalized using TPM or other things. Then the average expression refers to the average normalized number of fragments that align to a particular gene. Counts per million is the ratio of the counts for one gene and cell to the total amount of counts for the entire cell then multiplied by 1 million. While multiplying by 1,000 or 100 would essentially yield the same ratios and therfore the same distances across assays, using 1 million is a convention that was carried over from bulk RNA seq and I find that using smaller 10s would resut in very small numbers. Counts per total is the product of the count for a particular gene and cell by the total counts of all genes in a given cell and then divided by 1 million. The resulting values are much smaller than CPM. Let us now investigate which scale is adequate for this application. Is the CPM transformation really better than just using the raw counts?
 
 
