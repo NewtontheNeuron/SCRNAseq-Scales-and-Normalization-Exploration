@@ -208,6 +208,39 @@ ung_acr %>%
 ```
 Figure: Box plot showing the median and interquartile range (IQR) of raw log(x + 1) counts. The IQR contains those higher than 25% but lower than 75%. The color of the box plot is for the percent expressed on a color scale.
 
+```{r}
+ung_acr <- group_expand(all_cell_roster, overgrouped = "id")
+
+# Get the points that are outliers above 90 or below 10% quartile.
+bp_points <- function(x) {
+  subset(x, x < quantile(x, probs = 0.1) | quantile(x, probs = 0.9) < x)
+}
+
+ung_acr %>%
+  run_CPM("CPM") %>%
+  ggplot(aes(id, raw_counts)) +
+  stat_summary(
+    aes(
+      fill = after_stat(pct.exp)
+    ),
+    geom="boxplot",
+    fun.data = ~ data.frame(ymin = quantile(.x, 0.05),
+                            lower = quantile(.x, 0.25),
+                            middle = quantile(.x, 0.5),
+                            upper = quantile(.x, 0.75),
+                            ymax = quantile(.x, 0.95),
+                            pct.exp = pct_calc(.x))) +
+  stat_summary(fun.y = bp_points, geom="point") +
+  labs(x = "Region", y = "Raw logged counts", fill = "Percent Expressed") +
+  facet_grid(~features.label) +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_cartesian(ylim = c(0, p5max(all_cell_roster$raw_counts))) +
+  scale_fill_viridis_c(option = "plasma") +
+  themegsc
+```
+Figure: Box plot showing the median and interquartile range (IQR) of CPM or raw log(x + 1s) counts. The IQR contains those higher than 25% but lower than 75%. The color of the box plot is for the percent expressed on a color scale.
+
+
 We are unable to see the percent expressed of the groups with a lot of zeroes. The percent expressed gives information on whether or not we can accept the value or not [change wording here]. We can add the color scale perhaps in another way with a line at the top.
 
 ```{r}
